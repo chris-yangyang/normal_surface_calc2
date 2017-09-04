@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package>
+    <name>pcl_3d_tracker_kinova</name>
+    <version>0.0.0</version>
+    <description>The pcl_3d_tracker_kinova package</description>
+
+    <maintainer email="caperez@ualberta.ca">Camilo Perez</maintainer>
+
+    <license>MIT</license>
+
+    <buildtool_depend>catkin</buildtool_depend>
+
+    <build_depend>pcl</build_depend>
+    <build_depend>pcl_ros</build_depend>
+    <build_depend>roscpp</build_depend>
+    <build_depend>sensor_msgs</build_depend>
+    <build_depend>calibration_kinova_visual</build_depend>
+
+    <run_depend>pcl</run_depend>
+    <run_depend>pcl_ros</run_depend>
+    <run_depend>roscpp</run_depend>
+    <run_depend>sensor_msgs</run_depend>
+    <run_depend>calibration_kinova_visual</run_depend>
+
+    <export>
+    </export>
+</package>
