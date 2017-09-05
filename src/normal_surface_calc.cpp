@@ -2,7 +2,8 @@
 //Date:Oct 22 2015
 
 #include <ros/ros.h>
-#include "normal_surface_calc/targetPoints.h"
+#include "std_msgs/String.h"
+#include "normal_surface_calc2/targetPoints.h"
 #include "rgb_visualization/pathData.h"
 
 #include <pcl_ros/point_cloud.h>
@@ -18,9 +19,13 @@
 
 #include <Eigen/Geometry>
 #include <Eigen/Dense>
+#include "math_helper.h"
+#include "string_convertor.h"
+
 #define MAX_ITERATION    100
 #define RESOLUTION       0.02   //Octree Resolution
-
+using namespace std;
+using namespace cv;
 typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
 
@@ -45,7 +50,7 @@ std::vector<pcl::PointXYZ> xyz_path_normal_point;
 
 Eigen::Quaternionf robot_orientation;
 Eigen::Vector3f output3_vector, z_input_vector;
-Eigen::Matrix4f transformationMatrix, inverse_transformationMatrix; 
+Eigen::Matrix4f transformationMatrix, inverse_transformationMatrix;
 Eigen::Vector4f robot_position, kinect_robot_position,kinect_robot_normal_point, robot_normal_point, robot_normal_vector; //robot_orientation,z_vector
 Eigen::Vector4f kinect_robot_frame_reference_zero,kinect_robot_frame_reference_x,kinect_robot_frame_reference_y,kinect_robot_frame_reference_z,robot_frame_reference_x,robot_frame_reference_y,robot_frame_reference_z, robot_frame_reference_zero;
 int target = 0, saving_flag = 0, path_size=0;
@@ -62,6 +67,69 @@ std::vector<Eigen::Vector4f> normals_robot_v;
 std::vector<Eigen::Vector4f> normals_robot_r;
 
 Eigen::Vector3f normals_robot_r_normalized;
+vector< vector <Point> > vPtSignature;
+
+vector< vector <path_point> > getBackStrokes(vector < vector < Point> > _inputPoints, normal_surface_calc2::targetPoints msg)
+{
+  vector< vector <path_point> > rtVects;
+    int strokesNum=_inputPoints.size();
+    int counter=0;
+    for(int i=0;i<strokesNum;i++)
+    {
+       vector<path_point> thisStroke;
+       for(int j=0;j<_inputPoints[i].size();j++)
+       {
+           Point3d _p(msg.path_robot[counter].x, msg.path_robot[counter].y, msg.path_robot[counter].z);
+           Point3d _n(msg.normals_robot[i].x, msg.normals_robot[i].y, msg.normals_robot[i].z);
+           path_point thisP(_p,_n);
+           thisStroke.push_back(thisP);
+           counter++;
+       }
+       rtVects.push_back(thisStroke);
+     }
+     return rtVects;
+}
+
+void signature_data_callback(const std_msgs::String::ConstPtr& msg)
+{
+    if(msg->data=="reset")
+    {
+       vPtSignature.clear();
+       return ;
+    }
+    vector<string> strokeStrs=string_convertor::split(msg->data, ';');//get different strokes.
+    size_t strokesNum=strokeStrs.size();
+    if(strokesNum>0)
+    {
+         vPtSignature.clear();
+        vector<vector<Point> >().swap(vPtSignature);
+        for(int i=0;i<strokesNum;i++)
+        {
+          string thisStroke=strokeStrs[i];
+          vector<double> points=string_convertor::fromString2Array(thisStroke);
+          size_t pointNum=points.size()/2;
+          vector<Point> strokePoints;
+          for(int j=0;j<pointNum;j++)
+              strokePoints.push_back(Point(points[2*j],points[2*j+1]));
+          vPtSignature.push_back(strokePoints);
+        }
+        //published=false;
+        u =0;
+        v = 0;
+        uTarget = 0;
+        vTarget = 0;
+        if(saving_flag==0) {
+          //READ new normal data
+          saving_flag = 1;
+          u_path.clear();
+          v_path.clear();
+          u_path=math_helper::getU_Path(vPtSignature);
+          v_path=math_helper::getV_Path(vPtSignature);
+          path_size=u_path.size();
+          new_path=true;
+        }
+    }
+}
 
 Eigen::Matrix4f read_transform_matrix() {
     std::ifstream transform_file;
@@ -103,7 +171,7 @@ void wamPoseCallback(const geometry_msgs::PoseStamped::ConstPtr& poseMessage) {
     robot_position.y()=poseMessage->pose.position.y;
     robot_position.z()=poseMessage->pose.position.z;
 robot_position.w()=1.0;
-  
+
 output3_vector=robot_orientation._transformVector(z_input_vector);
  robot_normal_vector.x()=0.2*output3_vector.x();
  robot_normal_vector.y()=0.2*output3_vector.y();
@@ -123,16 +191,16 @@ void chatterCallback(const rgb_visualization::pathData::ConstPtr& msg2) {
     //READ new normal data
     saving_flag = 1;
     path_size=msg2->u_path.size();
- 
+
     u_path.resize(msg2->u_path.size());
-    v_path.resize(msg2->v_path.size());    
-    
-    for (int i = 0; i < path_size; i++) {   
+    v_path.resize(msg2->v_path.size());
+
+    for (int i = 0; i < path_size; i++) {
       u_path[i]=msg2->u_path[i];
       v_path[i]=msg2->v_path[i];
       //    std::cout << "(u,v)=" << u_path[i]<<" , "<<v_path[i]<< std::endl;
     }
-    new_path=true; 
+    new_path=true;
   }
   else if(msg2->savingFlag==0)
     {
@@ -201,27 +269,27 @@ void callback(const PointCloud::ConstPtr& msg) {
 	}
 
 	//CP--
-	
+
 	//std::cerr << "Fill eigen vector: " << std::endl;
 	//Fill the eigen vector
 	for (int h = 0; h < path_size; h++) {
-	  path_robot_v[h].x()=xyz_path_coordinate[h].x;  
-	  path_robot_v[h].y()=xyz_path_coordinate[h].y;  
-	  path_robot_v[h].z()=xyz_path_coordinate[h].z;  
+	  path_robot_v[h].x()=xyz_path_coordinate[h].x;
+	  path_robot_v[h].y()=xyz_path_coordinate[h].y;
+	  path_robot_v[h].z()=xyz_path_coordinate[h].z;
 	  path_robot_v[h].w()=1.0;
 	  //Normals to homogeneous representation
-	  normals_robot_v[h].x()=xyz_path_normal[h].x;  
-	  normals_robot_v[h].y()=xyz_path_normal[h].y;  
-	  normals_robot_v[h].z()=xyz_path_normal[h].z;  
+	  normals_robot_v[h].x()=xyz_path_normal[h].x;
+	  normals_robot_v[h].y()=xyz_path_normal[h].y;
+	  normals_robot_v[h].z()=xyz_path_normal[h].z;
 	  normals_robot_v[h].w()=1.0;
 
 
 	}
 
-	
+
 	//std::cerr << "matrix multipl: " << std::endl;
-       
-	//transform kinect path points into robot path points 
+
+	//transform kinect path points into robot path points
 	for (int k = 0; k < path_size; k++) {
 	  path_robot_r[k]=transformationMatrix*path_robot_v[k];
 	  //std::cout << "This is the coordinate in the  robot frame of reference" << path_robot_r[k] << std::endl;
@@ -239,13 +307,13 @@ void callback(const PointCloud::ConstPtr& msg) {
 
 	new_path=false;
       }
-   
+
 //
 
 
     trackingPoint = cloud_filtered->points[(int)v * cloud_filtered->width + (int)u];
     targetPoint = cloud_filtered->points[(int)vTarget * cloud_filtered->width + (int)uTarget];
-    
+
     float x_normal=normals->points[(int)vTarget * cloud_filtered->width + (int)uTarget].normal_x;
 
     float y_normal=normals->points[(int)vTarget * cloud_filtered->width + (int)uTarget].normal_y;
@@ -266,7 +334,7 @@ void callback(const PointCloud::ConstPtr& msg) {
     kinect_robot_position=inverse_transformationMatrix*robot_position;
     kinect_robot_normal_point=inverse_transformationMatrix*robot_normal_point; //CP
 
-    //adding robot frame inside the kinect frame 
+    //adding robot frame inside the kinect frame
 
     //end adding robot frame inside the kinect frame
 
@@ -276,32 +344,32 @@ void callback(const PointCloud::ConstPtr& msg) {
     robotEndEffector.x=kinect_robot_position.x();
     robotEndEffector.y=kinect_robot_position.y();
     robotEndEffector.z=kinect_robot_position.z();
-     
+
     robotEndEffector_point.x=kinect_robot_normal_point.x();
     robotEndEffector_point.y=kinect_robot_normal_point.y();
     robotEndEffector_point.z=kinect_robot_normal_point.z();
-    
-   
 
 
-    std::basic_string<char> name = "arrow"; 
-    std::basic_string<char> name2 = "arrow2"; 
 
-    std::basic_string<char> name3 = "robot_frame_reference_x"; 
-    std::basic_string<char> name4 = "robot_frame_reference_y"; 
-    std::basic_string<char> name5 = "robot_frame_reference_z"; 
-    
+
+    std::basic_string<char> name = "arrow";
+    std::basic_string<char> name2 = "arrow2";
+
+    std::basic_string<char> name3 = "robot_frame_reference_x";
+    std::basic_string<char> name4 = "robot_frame_reference_y";
+    std::basic_string<char> name5 = "robot_frame_reference_z";
+
 
     //viewer->addPointCloud<pcl::PointXYZ>(cloud_filtered, "sample cloud2");
     viewer->addPointCloudNormals<pcl::PointXYZ,pcl::Normal>(cloud_filtered,normals,100,0.02,"sample cloud2",0);
 
     for (int j = 0; j < xyz_path_coordinate.size(); j++) {
-      viewer->addSphere( xyz_path_coordinate[j], 0.015, 0.0, 1.0, 0.0, "point"+boost::lexical_cast<std::string>(j));   
+      viewer->addSphere( xyz_path_coordinate[j], 0.015, 0.0, 1.0, 0.0, "point"+boost::lexical_cast<std::string>(j));
       viewer->addArrow<pcl::PointXYZ>( xyz_path_normal_point[j],xyz_path_coordinate[j],0.0,1.0,0.0,false,"normal"+boost::lexical_cast<std::string>(j));
     }
 
-  
-    viewer->addSphere(robotEndEffector, 0.025, 1.0, 0.0, 0.0, "robotEndEffector");   
+
+    viewer->addSphere(robotEndEffector, 0.025, 1.0, 0.0, 0.0, "robotEndEffector");
     viewer->addSphere(targetPoint, 0.025, 1.0, 0.0, 0.0, "targetPoint");
     viewer->addArrow<pcl::PointXYZ>(normalPoint,targetPoint,1.0,0.0,0.0,false,name);
     viewer->addArrow<pcl::PointXYZ>(robotEndEffector_point,robotEndEffector,1.0,0.0,0.0,false,name2);
@@ -315,7 +383,7 @@ void callback(const PointCloud::ConstPtr& msg) {
     viewer->removePointCloud("sample cloud2");
     viewer->removeShape("targetPoint");
     for (int j = 0; j < xyz_path_coordinate.size(); j++) {
-   viewer->removeShape("point"+boost::lexical_cast<std::string>(j));   
+   viewer->removeShape("point"+boost::lexical_cast<std::string>(j));
    viewer->removeShape("normal"+boost::lexical_cast<std::string>(j));
     }
 
@@ -334,7 +402,10 @@ int main(int argc, char** argv) {
 
     ros::Subscriber sub2 = nh.subscribe("path_data", 100, chatterCallback);
     ros::Subscriber sub3 = nh.subscribe("/zeus/wam/pose", 1, wamPoseCallback);
-    ros::Publisher chatter_pub3 = nh.advertise<normal_surface_calc::targetPoints>("targetPoints", 100);
+    ros::Publisher chatter_pub3 = nh.advertise<normal_surface_calc2::targetPoints>("targetPoints", 100);
+    ros::Subscriber sub4 = nh.subscribe("/chris/strokes", 1000, signature_data_callback);
+    //ros::spinOnce();
+    ros::Publisher pubTask2 = nh.advertise<std_msgs::String>("/chris/final_drawing_task", 1, true);//task will be only published once
 
     viewer->setBackgroundColor(0, 0, 0);
     viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
@@ -407,7 +478,7 @@ int main(int argc, char** argv) {
     kinect_robot_zero.x=kinect_robot_frame_reference_zero.x();
     kinect_robot_zero.y=kinect_robot_frame_reference_zero.y();
     kinect_robot_zero.z=kinect_robot_frame_reference_zero.z();
-    /*  
+    /*
     //CP:ERASE
   robot_orientation.x() =0.0;// poseMessage->pose.orientation.x;
   robot_orientation.y() =0.0; //poseMessage->pose.orientation.y;
@@ -417,7 +488,7 @@ int main(int argc, char** argv) {
   robot_position.y()=0.0;//poseMessage->pose.position.y;
   robot_position.z()=0.4;//poseMessage->pose.position.z;
 robot_position.w()=1.0;
-  
+
 output3_vector=robot_orientation._transformVector(z_input_vector);
 // output3_vector=robot_orientation.toRotationMatrix()*z_input_vector;
 
@@ -437,7 +508,7 @@ std::cout << "Esto debe ser 0.6 en Z" << robot_normal_point << std::endl;
 */
 
     while(ros::ok()) {
-        normal_surface_calc::targetPoints msg_targetPoints;
+        normal_surface_calc2::targetPoints msg_targetPoints;
 
 	/*ROS_INFO("u:%f \n", u);
 	ROS_INFO("u:%f \n", v);
@@ -447,25 +518,25 @@ std::cout << "Esto debe ser 0.6 en Z" << robot_normal_point << std::endl;
         ROS_INFO("Target Point(x, y, z):(%f, %f, %f) \n", targetPoint.x, targetPoint.y, targetPoint.z);
 	*/
 	//	std::cout << "Murio antes del resize" <<std::endl;
-   
-	msg_targetPoints.path_robot.resize(path_size);  
-	msg_targetPoints.normals_robot.resize(path_size);  
+
+	msg_targetPoints.path_robot.resize(path_size);
+	msg_targetPoints.normals_robot.resize(path_size);
 	//std::cout << "Murio despues del resize" <<std::endl;
-	
+
 	for (int i = 0; i < path_size; i++) {
 	  //CP--
 	  //std::cout << "Murio antes de asignar" <<std::endl;
 	  if(new_path_robot)
 	    {
 	    //std::cout << "Este es la coordenada en robot" << path_robot_r[i] << std::endl;
-	      msg_targetPoints.path_robot[i].x=path_robot_r[i].x();  
+	      msg_targetPoints.path_robot[i].x=path_robot_r[i].x();
 	      msg_targetPoints.path_robot[i].y=path_robot_r[i].y();
 	      msg_targetPoints.path_robot[i].z=path_robot_r[i].z();
-	  
+
 	      /* msg_targetPoints.path_robot[i].x=1.0;
 		 msg_targetPoints.path_robot[i].y=1.0;
 		 msg_targetPoints.path_robot[i].z=1.0;*/
-	      
+
 	      // std::cout << "Este es el vector antes de normalizar" << normals_robot_r[i] << std::endl;
 	      //normals_robot_r_normalized = normals_robot_r[i].normalized();
 	      normals_robot_r_normalized.x()=normals_robot_r[i].x();
@@ -478,20 +549,20 @@ std::cout << "Esto debe ser 0.6 en Z" << robot_normal_point << std::endl;
 	      //msg_targetPoints.normals_robot[i].z=normals_robot_r[i].z();
 
 	      //Uncomment this if you want dynamic  normals
-	      
-	      msg_targetPoints.normals_robot[i].x=normals_robot_r_normalized.x(); 
+
+	      msg_targetPoints.normals_robot[i].x=normals_robot_r_normalized.x();
 	      msg_targetPoints.normals_robot[i].y=normals_robot_r_normalized.y();
 	      msg_targetPoints.normals_robot[i].z=normals_robot_r_normalized.z();
-	      
+
 
 	      //Uncomment this if you want fix normals in z direction
-	      /* msg_targetPoints.normals_robot[i].x=0; 
+	      /* msg_targetPoints.normals_robot[i].x=0;
 	      msg_targetPoints.normals_robot[i].y=0;
 	      msg_targetPoints.normals_robot[i].z=1;
 	      */
 
 	    }
-	 
+
 	}
 
 
@@ -508,6 +579,11 @@ std::cout << "Esto debe ser 0.6 en Z" << robot_normal_point << std::endl;
                 msg_targetPoints.trackingPoint[2] = trackingPoint.z;
             }
             chatter_pub3.publish(msg_targetPoints);
+            vector< vector <path_point> > destPoints=getBackStrokes(vPtSignature,msg_targetPoints);
+            std_msgs::String msg;
+            msg.data = string_convertor::constructPubStr(destPoints);
+            pubTask2.publish(msg);
+            //published=true;
         }
         ros::spinOnce();
         loop_rate.sleep();
